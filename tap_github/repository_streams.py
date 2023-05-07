@@ -125,10 +125,8 @@ class RepositoryStream(GitHubRestStream):
                     # not exist, log some details, and move on to the next one
                     repo_full_name = "/".join(repo_list[int(item[4:])])
                     self.logger.info(
-                        (
-                            f"Repository not found: {repo_full_name} \t"
-                            "Removing it from list"
-                        )
+                        f"Repository not found: {repo_full_name} \t"
+                        "Removing it from list"
                     )
                     continue
                 repos_with_ids.append(
@@ -1107,6 +1105,32 @@ class CommitCommentsStream(GitHubRestStream):
         th.Property("created_at", th.DateTimeType),
         th.Property("updated_at", th.DateTimeType),
         th.Property("author_association", th.StringType),
+    ).to_dict()
+
+
+class LabelsStream(GitHubRestStream):
+    """Defines 'labels' stream."""
+
+    name = "labels"
+    path = "/repos/{org}/{repo}/labels"
+    primary_keys = ["id"]
+    parent_stream_type = RepositoryStream
+    ignore_parent_replication_key = True
+    state_partitioning_keys = ["repo", "org"]
+
+    schema = th.PropertiesList(
+        # Parent Keys
+        th.Property("repo", th.StringType),
+        th.Property("org", th.StringType),
+        th.Property("repo_id", th.IntegerType),
+        # Label Keys
+        th.Property("id", th.IntegerType),
+        th.Property("node_id", th.StringType),
+        th.Property("url", th.StringType),
+        th.Property("name", th.StringType),
+        th.Property("description", th.StringType),
+        th.Property("color", th.StringType),
+        th.Property("default", th.BooleanType),
     ).to_dict()
 
 
@@ -2229,6 +2253,17 @@ class DependenciesStream(GitHubGraphqlStream):
 class TrafficRestStream(GitHubRestStream):
     """Base class for Traffic Streams"""
 
+    @property
+    def metadata(self):
+        """Override default selection metadata for this stream.
+
+        TODO: Remove this in favor of the recommended approach when the SDK has one.
+        """
+        result = super().metadata
+        if self._tap_input_catalog is None:
+            result.root.selected = False
+        return result
+
     def parse_response(self, response: requests.Response) -> Iterable[dict]:
         if response.status_code != 200:
             return []
@@ -2241,15 +2276,12 @@ class TrafficRestStream(GitHubRestStream):
         Do not raise exceptions if the error says "Must have push access to repository"
         as we actually expect these in this stream when we don't have write permissions into it.
         """
-        try:
-            super().validate_response(response)
-        except FatalAPIError as e:
-            if "Must have push access to repository" in str(e):
-                self.logger.info(
-                    "We do not have permissions for this repository", exc_info=True
-                )
+        if response.status_code == 403:
+            contents = response.json()
+            if contents["message"] == "Resource not accessible by integration":
+                self.logger.info("Permissions missing to sync stream '%s'", self.name)
                 return
-            raise
+        super().validate_response(response)
 
 
 class TrafficClonesStream(TrafficRestStream):
