@@ -2179,6 +2179,8 @@ class WorkflowRunJobsStream(GitHubRestStream):
 
     def parse_response(self, response: requests.Response) -> Iterable[dict]:
         """Parse the response and return an iterator of result rows."""
+        if response.status_code in self.tolerated_http_errors:
+            return
         yield from extract_jsonpath(self.records_jsonpath, input=response.json())
 
     def get_url_params(
